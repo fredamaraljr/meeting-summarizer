@@ -118,27 +118,35 @@ def delete_transcript(transcript_id):
 def main():
     parser = argparse.ArgumentParser(description="Resumidor de reuniões via Fireflies + Claude")
     parser.add_argument("--client", required=True, help="Nome do cliente")
+    parser.add_argument("--transcript", help="Caminho para transcrição existente (pula busca no Fireflies)")
     args = parser.parse_args()
     client_name = args.client
 
-    print("Buscando transcrição mais recente do Fireflies...")
-    transcript = fetch_latest_transcript()
+    if args.transcript:
+        with open(args.transcript, "r", encoding="utf-8") as f:
+            formatted = f.read()
+        transcript_file = args.transcript
+        date_str = datetime.today().strftime("%Y-%m-%d")
+        transcript_id = None
+    else:
+        print("Buscando transcrição mais recente do Fireflies...")
+        transcript = fetch_latest_transcript()
 
-    transcript_id = transcript["id"]
-    title = transcript["title"]
-    duration = transcript.get("duration", 0)
-    date_ms = transcript["date"]
-    date_dt = datetime.fromtimestamp(date_ms / 1000)
-    date_str = date_dt.strftime("%Y-%m-%d")
+        transcript_id = transcript["id"]
+        title = transcript["title"]
+        duration = transcript.get("duration", 0)
+        date_ms = transcript["date"]
+        date_dt = datetime.fromtimestamp(date_ms / 1000)
+        date_str = date_dt.strftime("%Y-%m-%d")
 
-    sentences = transcript.get("sentences") or []
-    formatted = format_transcript(sentences)
+        sentences = transcript.get("sentences") or []
+        formatted = format_transcript(sentences)
 
-    print(f"Transcrição: {title}")
-    print(f"Data: {date_str} | Duração: {duration} minutos")
+        print(f"Transcrição: {title}")
+        print(f"Data: {date_str} | Duração: {duration} minutos")
 
-    print("Salvando transcrição no OneDrive...")
-    transcript_file = save_transcript(client_name, date_str, formatted)
+        print("Salvando transcrição no OneDrive...")
+        transcript_file = save_transcript(client_name, date_str, formatted)
 
     print("Gerando resumo com Gemini...")
     summary = generate_summary(formatted)
@@ -150,13 +158,14 @@ def main():
     print(f"  Transcrição: {transcript_file}")
     print(f"  Resumo:      {summary_file}")
 
-    answer = input("\nDeseja deletar a transcrição do Fireflies? (s/n): ").strip().lower()
-    if answer == "s":
-        result = delete_transcript(transcript_id)
-        deleted = result.get("data", {}).get("deleteTranscript", {})
-        print(f"Transcrição deletada: {deleted.get('title', transcript_id)}")
-    else:
-        print("Transcrição mantida no Fireflies.")
+    if transcript_id:
+        answer = input("\nDeseja deletar a transcrição do Fireflies? (s/n): ").strip().lower()
+        if answer == "s":
+            result = delete_transcript(transcript_id)
+            deleted = result.get("data", {}).get("deleteTranscript", {})
+            print(f"Transcrição deletada: {deleted.get('title', transcript_id)}")
+        else:
+            print("Transcrição mantida no Fireflies.")
 
 
 if __name__ == "__main__":

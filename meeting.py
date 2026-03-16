@@ -12,7 +12,7 @@ load_dotenv()
 
 FIREFLIES_API_URL = "https://api.fireflies.ai/graphql"
 FIREFLIES_API_KEY = os.getenv("FIREFLIES_API_KEY")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 ONEDRIVE_PATH = os.getenv("ONEDRIVE_PATH")
 OBSIDIAN_PATH = os.getenv("OBSIDIAN_PATH")
 
@@ -67,27 +67,23 @@ def save_transcript(client_name, client_project, date_str, formatted_text):
 
 
 def generate_summary(formatted_transcript):
-
-    
-    client = Anthropic(api_key=ANTHROPIC_API_KEY)
-    system_prompt = (
-        "Você é um assistente especializado em resumir reuniões de negócios. "
-        "Analise a transcrição a seguir e produza um resumo em português brasileiro "
-        "com as seguintes seções:\n\n"
-        "## Resumo Geral\n"
-        "Um parágrafo descrevendo o contexto e os principais tópicos discutidos.\n\n"
-        "## Decisões Tomadas\n"
-        "Lista das decisões confirmadas durante a reunião.\n\n"
-        "## Próximos Passos / Action Items\n"
-        "Lista de tarefas e responsáveis identificados na reunião."
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel(
+        model_name="gemini-2.0-flash",
+        system_instruction=(
+            "Você é um assistente especializado em resumir reuniões de negócios. "
+            "Analise a transcrição a seguir e produza um resumo em português brasileiro "
+            "com as seguintes seções:\n\n"
+            "## Resumo Geral\n"
+            "Um parágrafo descrevendo o contexto e os principais tópicos discutidos.\n\n"
+            "## Decisões Tomadas\n"
+            "Lista das decisões confirmadas durante a reunião.\n\n"
+            "## Próximos Passos / Action Items\n"
+            "Lista de tarefas e responsáveis identificados na reunião."
+        ),
     )
-    message = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=2048,
-        system=system_prompt,
-        messages=[{"role": "user", "content": formatted_transcript}],
-    )
-    return message.content[0].text
+    response = model.generate_content(formatted_transcript)
+    return response.text
 
 
 def save_summary(client_name, client_project, date_str, summary, transcript_path):
@@ -149,7 +145,7 @@ def main():
     print("Salvando transcrição no OneDrive...")
     transcript_file = save_transcript(client_name, client_project, date_str, formatted)
 
-    print("Gerando resumo com Claude...")
+    print("Gerando resumo com Gemini...")
     summary = generate_summary(formatted)
 
     print("Salvando resumo no Obsidian...")

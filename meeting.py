@@ -4,6 +4,7 @@ import sys
 from datetime import datetime
 
 import requests
+# from anthropic import Anthropic
 import google.generativeai as genai
 from dotenv import load_dotenv
 
@@ -14,6 +15,7 @@ FIREFLIES_API_KEY = os.getenv("FIREFLIES_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 ONEDRIVE_PATH = os.getenv("ONEDRIVE_PATH")
 OBSIDIAN_PATH = os.getenv("OBSIDIAN_PATH")
+
 
 
 def fetch_latest_transcript():
@@ -55,12 +57,13 @@ def format_transcript(sentences):
     return "\n".join(lines)
 
 
-def save_transcript(client_name, date_str, formatted_text):
-    path = os.path.join(ONEDRIVE_PATH, "Meetings", client_name, date_str, "transcript.txt")
+def save_transcript(client_name, client_project, date_str, formatted_text):
+    path = os.path.join(ONEDRIVE_PATH, client_name, client_project, "Meetings", date_str, "transcript.txt")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(formatted_text)
     return path
+
 
 
 def generate_summary(formatted_transcript):
@@ -83,10 +86,10 @@ def generate_summary(formatted_transcript):
     return response.text
 
 
-def save_summary(client_name, date_str, summary, transcript_path):
-    path = os.path.join(OBSIDIAN_PATH, "Meetings", client_name, f"{date_str}.md")
+def save_summary(client_name, client_project, date_str, summary, transcript_path):
+    path = os.path.join(OBSIDIAN_PATH, "Meetings", client_name, client_project, f"{date_str}.md")
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    transcript_rel_link = f"[Ver transcrição]({client_name}/{date_str}/transcript.txt)"
+    transcript_rel_link = f"[Ver transcrição]({client_name}/{client_project}/{date_str}/transcript.txt)"
     content = f"# Reunião — {client_name} — {date_str}\n\n{transcript_rel_link}\n\n{summary}\n"
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
@@ -119,8 +122,10 @@ def main():
     parser = argparse.ArgumentParser(description="Resumidor de reuniões via Fireflies + Claude")
     parser.add_argument("--client", required=True, help="Nome do cliente")
     parser.add_argument("--transcript", help="Caminho para transcrição existente (pula busca no Fireflies)")
+    parser.add_argument("--project", required=True, help="Nome do projeto")
     args = parser.parse_args()
     client_name = args.client
+    client_project = args.project
 
     if args.transcript:
         with open(args.transcript, "r", encoding="utf-8") as f:
@@ -145,14 +150,14 @@ def main():
         print(f"Transcrição: {title}")
         print(f"Data: {date_str} | Duração: {duration} minutos")
 
-        print("Salvando transcrição no OneDrive...")
-        transcript_file = save_transcript(client_name, date_str, formatted)
+    print("Salvando transcrição no OneDrive...")
+    transcript_file = save_transcript(client_name, client_project, date_str, formatted)
 
     print("Gerando resumo com Gemini...")
     summary = generate_summary(formatted)
 
     print("Salvando resumo no Obsidian...")
-    summary_file = save_summary(client_name, date_str, summary, transcript_file)
+    summary_file = save_summary(client_name, client_project, date_str, summary, transcript_file)
 
     print("\nArquivos salvos com sucesso:")
     print(f"  Transcrição: {transcript_file}")

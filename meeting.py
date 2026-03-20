@@ -1,167 +1,83 @@
 import argparse
-import os
 import sys
 from datetime import datetime
 
-import requests
-# from anthropic import Anthropic
-import google.generativeai as genai
 from dotenv import load_dotenv
+
+from fireflies_client import delete_transcript, download_audio, fetch_transcripts
+from storage import format_transcript, save_transcript
 
 load_dotenv()
 
-FIREFLIES_API_URL = "https://api.fireflies.ai/graphql"
-FIREFLIES_API_KEY = os.getenv("FIREFLIES_API_KEY")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-ONEDRIVE_PATH = os.getenv("ONEDRIVE_PATH")
-OBSIDIAN_PATH = os.getenv("OBSIDIAN_PATH")
 
+def pick_transcript(transcripts):
+    print("\nTranscrições recentes:\n")
+    for i, t in enumerate(transcripts, 1):
+        date_ms = t.get("date")
+        if date_ms:
+            dt = datetime.fromtimestamp(date_ms / 1000)
+            date_label = dt.strftime("%Y-%m-%d %H:%M")
+        else:
+            date_label = "Data desconhecida"
+        duration = t.get("duration", 0)
+        print(f"  [{i}] {t['title']} — {date_label} | {duration} min")
 
-
-def fetch_latest_transcript():
-    query = """
-    query {
-        transcripts(limit: 1) {
-            id
-            title
-            date
-            duration
-            sentences {
-                speaker_name
-                raw_text
-            }
-        }
-    }
-    """
-    headers = {
-        "Authorization": f"Bearer {FIREFLIES_API_KEY}",
-        "Content-Type": "application/json",
-    }
-    response = requests.post(FIREFLIES_API_URL, json={"query": query}, headers=headers)
-    response.raise_for_status()
-    data = response.json()
-    transcripts = data["data"]["transcripts"]
-    if not transcripts:
-        print("Nenhuma transcrição encontrada.")
-        sys.exit(1)
-    return transcripts[0]
-
-
-def format_transcript(sentences):
-    lines = []
-    for sentence in sentences:
-        speaker = sentence.get("speaker_name") or "Desconhecido"
-        text = sentence.get("raw_text", "").strip()
-        if text:
-            lines.append(f"{speaker}: {text}")
-    return "\n".join(lines)
-
-
-def save_transcript(client_name, client_project, date_str, formatted_text):
-    path = os.path.join(ONEDRIVE_PATH, client_name, client_project, "Meetings", date_str, "transcript.txt")
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(formatted_text)
-    return path
-
-
-
-def generate_summary(formatted_transcript):
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel(
-        model_name="gemini-2.0-flash",
-        system_instruction=(
-            "Você é um assistente especializado em resumir reuniões de negócios. "
-            "Analise a transcrição a seguir e produza um resumo em português brasileiro "
-            "com as seguintes seções:\n\n"
-            "## Resumo Geral\n"
-            "Um parágrafo descrevendo o contexto e os principais tópicos discutidos.\n\n"
-            "## Decisões Tomadas\n"
-            "Lista das decisões confirmadas durante a reunião.\n\n"
-            "## Próximos Passos / Action Items\n"
-            "Lista de tarefas e responsáveis identificados na reunião."
-        ),
-    )
-    response = model.generate_content(formatted_transcript)
-    return response.text
-
-
-def save_summary(client_name, client_project, date_str, summary, transcript_path):
-    path = os.path.join(OBSIDIAN_PATH, "Meetings", client_name, client_project, f"{date_str}.md")
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    transcript_rel_link = f"[Ver transcrição]({client_name}/{client_project}/{date_str}/transcript.txt)"
-    content = f"# Reunião — {client_name} — {date_str}\n\n{transcript_rel_link}\n\n{summary}\n"
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(content)
-    return path
-
-
-def delete_transcript(transcript_id):
-    mutation = """
-    mutation DeleteTranscript($id: String!) {
-        deleteTranscript(id: $id) {
-            id
-            title
-        }
-    }
-    """
-    headers = {
-        "Authorization": f"Bearer {FIREFLIES_API_KEY}",
-        "Content-Type": "application/json",
-    }
-    response = requests.post(
-        FIREFLIES_API_URL,
-        json={"query": mutation, "variables": {"id": transcript_id}},
-        headers=headers,
-    )
-    response.raise_for_status()
-    return response.json()
+    print()
+    while True:
+        choice = input("Escolha uma transcrição (número) ou 'q' para sair: ").strip().lower()
+        if choice == "q":
+            print("Saindo.")
+            sys.exit(0)
+        if choice.isdigit():
+            idx = int(choice) - 1
+            if 0 <= idx < len(transcripts):
+                return transcripts[idx]
+        print(f"Opção inválida. Digite um número entre 1 e {len(transcripts)} ou 'q'.")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Resumidor de reuniões via Fireflies + Claude")
+    parser = argparse.ArgumentParser(description="Salva transcrição de reunião do Fireflies")
     parser.add_argument("--client", required=True, help="Nome do cliente")
-    parser.add_argument("--transcript", help="Caminho para transcrição existente (pula busca no Fireflies)")
     parser.add_argument("--project", required=True, help="Nome do projeto")
+    parser.add_argument("--transcript", help="Caminho para transcrição existente (pula busca no Fireflies)")
+    parser.add_argument("--limit", type=int, default=10, help="Número de transcrições a listar (padrão: 10)")
     args = parser.parse_args()
+
     client_name = args.client
     client_project = args.project
 
     if args.transcript:
         with open(args.transcript, "r", encoding="utf-8") as f:
             formatted = f.read()
-        transcript_file = args.transcript
-        date_str = datetime.today().strftime("%Y-%m-%d")
+        date_str = datetime.now().strftime("%Y-%m-%d_%H-%M")
         transcript_id = None
     else:
-        print("Buscando transcrição mais recente do Fireflies...")
-        transcript = fetch_latest_transcript()
+        print("Buscando transcrições do Fireflies...")
+        transcripts = fetch_transcripts(limit=args.limit)
+        transcript = pick_transcript(transcripts)
 
         transcript_id = transcript["id"]
-        title = transcript["title"]
-        duration = transcript.get("duration", 0)
+        audio_url = transcript.get("audio_url")
         date_ms = transcript["date"]
-        date_dt = datetime.fromtimestamp(date_ms / 1000)
-        date_str = date_dt.strftime("%Y-%m-%d")
+        dt = datetime.fromtimestamp(date_ms / 1000)
+        date_str = dt.strftime("%Y-%m-%d")
 
         sentences = transcript.get("sentences") or []
         formatted = format_transcript(sentences)
 
-        print(f"Transcrição: {title}")
-        print(f"Data: {date_str} | Duração: {duration} minutos")
-
-    print("Salvando transcrição no OneDrive...")
+    print("\nSalvando transcrição no Obsidian...")
     transcript_file = save_transcript(client_name, client_project, date_str, formatted)
+    print(f"Transcrição salva: {transcript_file}")
 
-    print("Gerando resumo com Gemini...")
-    summary = generate_summary(formatted)
-
-    print("Salvando resumo no Obsidian...")
-    summary_file = save_summary(client_name, client_project, date_str, summary, transcript_file)
-
-    print("\nArquivos salvos com sucesso:")
-    print(f"  Transcrição: {transcript_file}")
-    print(f"  Resumo:      {summary_file}")
+    if audio_url:
+        answer = input("\nDeseja baixar o áudio da reunião? (s/n): ").strip().lower()
+        if answer == "s":
+            audio_path = transcript_file.replace("transcript.txt", "audio.mp4")
+            try:
+                download_audio(audio_url, audio_path)
+                print(f"Áudio salvo: {audio_path}")
+            except Exception as e:
+                print(f"Não foi possível baixar o áudio: {e}")
 
     if transcript_id:
         answer = input("\nDeseja deletar a transcrição do Fireflies? (s/n): ").strip().lower()
